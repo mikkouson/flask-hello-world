@@ -7,13 +7,110 @@ from supabase import create_client, Client
 import os
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from flask import Flask, jsonify
+from flask_cors import CORS
+import threading
+import websocket
+import json
+import queue
 
+# Load environment variables
 load_dotenv()
 
 # Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Create Flask app
+app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
+
+# Global queue for realtime updates
+realtime_update_queue = queue.Queue()
+
+def process_realtime_updates():
+    """
+    Background thread to process realtime updates to inventory
+    """
+    while True:
+        try:
+            # Block and wait for updates
+            update = realtime_update_queue.get()
+            
+            # Log the update
+            print(f"Processing Realtime Update: {update}")
+            
+            # You can add custom logic here for different event types
+            if update.get('event_type') == 'INSERT':
+                # Handle new inventory item
+                pass
+            elif update.get('event_type') == 'UPDATE':
+                # Handle inventory item update
+                pass
+            elif update.get('event_type') == 'DELETE':
+                # Handle inventory item deletion
+                pass
+            
+            # Mark task as done
+            realtime_update_queue.task_done()
+        
+        except Exception as e:
+            print(f"Error processing realtime update: {e}")
+
+def on_realtime_message(ws, message):
+    """
+    Callback for processing websocket realtime messages
+    """
+    try:
+        data = json.loads(message)
+        
+        # Check for realtime event
+        if data.get('event') in ['INSERT', 'UPDATE', 'DELETE']:
+            update = {
+                'event_type': data.get('event'),
+                'table': data.get('table', 'unknown'),
+                'payload': data.get('payload')
+            }
+            
+            # Put update in queue for processing
+            realtime_update_queue.put(update)
+    
+    except Exception as e:
+        print(f"Error in realtime message handler: {e}")
+
+def start_realtime_listener():
+    """
+    Start websocket for realtime Supabase updates
+    """
+    try:
+        # Construct WebSocket URL
+        ws_url = SUPABASE_URL.replace('https://', 'wss://').replace('http://', 'ws://') + '/realtime/v1/websocket'
+        
+        ws = websocket.WebSocketApp(
+            ws_url,
+            header={"apikey": SUPABASE_KEY},
+            on_message=on_realtime_message
+        )
+        
+        # Listen for changes in inventory table
+        subscribe_msg = {
+            "event": "phx_join",
+            "topic": "realtime:public:inventory",
+            "payload": {},
+            "ref": "1"
+        }
+        
+        def on_open(ws):
+            print("Realtime WebSocket Connection Opened")
+            ws.send(json.dumps(subscribe_msg))
+        
+        ws.on_open = on_open
+        
+        ws.run_forever()
+    
+    except Exception as e:
+        print(f"Realtime listener error: {e}")
 
 def prepare_data():
     """Fetch and prepare inventory and usage data"""
@@ -109,25 +206,32 @@ def train_predict_model(merged_df):
         print(f"Error in model training: {e}")
         raise
 
-def main():
-    # Prepare data
-    data = prepare_data()
-    
-    # Train model and get recommendations
-    recommendations, metrics = train_predict_model(data)
-    
-    # Print results
-    print("\n--- Inventory Predictions and Recommendations ---")
-    for rec in recommendations:
-        print(f"Item: {rec['item_name']} (ID: {rec['item_id']})")
-        print(f"Current Quantity: {rec['current_quantity']}")
-        print(f"Predicted Monthly Usage: {rec['predicted_monthly_usage']}")
-        print(f"Recommended Restock: {rec['recommended_restock']}")
-        print("---")
-    
-    print("\n--- Model Performance Metrics ---")
-    for metric, value in metrics.items():
-        print(f"{metric}: {value}")
+@app.route('/api/predictions', methods=['GET'])
+def get_predictions():
+    try:
+        # Prepare data
+        data = prepare_data()
+        
+        # Train model and get recommendations
+        recommendations, metrics = train_predict_model(data)
+        
+        return jsonify({
+            'recommendations': recommendations,
+            'metrics': metrics
+        })
+    except Exception as e:
+        return jsonify({
+            'error': str(e)
+        }), 500
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    # Start realtime update processing thread
+    update_thread = threading.Thread(target=process_realtime_updates, daemon=True)
+    update_thread.start()
+    
+    # Start realtime listener thread
+    realtime_thread = threading.Thread(target=start_realtime_listener, daemon=True)
+    realtime_thread.start()
+    
+    # Run Flask app
+    app.run(debug=True)
