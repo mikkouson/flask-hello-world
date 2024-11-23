@@ -170,16 +170,10 @@ def train_predict_model(merged_df):
         y_pred = model.predict(X_test)
         
         metrics = {
-            'mae': mean_absolute_error(y_test, y_pred),
-            'rmse': np.sqrt(mean_squared_error(y_test, y_pred)),
-            'r2': r2_score(y_test, y_pred)
+            'MAE': mean_absolute_error(y_test, y_pred),
         }
 
-        # Cross-validation
-        cv_scores = cross_val_score(model, X, y, cv=5, scoring='r2')
-        metrics['cv_r2_mean'] = cv_scores.mean()
-        metrics['cv_r2_std'] = cv_scores.std()
-
+        
         # Predict next month's usage
         predicted_usage = model.predict(X)
         
@@ -190,7 +184,9 @@ def train_predict_model(merged_df):
             current_quantity = row['quantity']
             
             # Recommend restock with 20% safety buffer
-            recommended_restock = max(0, int(predicted_monthly_usage * 1.2 - current_quantity))
+            needed_quantity = predicted_monthly_usage * 1.2  # Total needed with safety buffer
+            recommended_restock = max(0, needed_quantity - current_quantity)  # Only restock what's needed
+            
             
             recommendations.append({
                 'item_id': row['id'],
