@@ -186,11 +186,11 @@ def train_predict_model(merged_df):
             # Recommend restock with 20% safety buffer
             needed_quantity = predicted_monthly_usage * 1.2  # Total needed with safety buffer
             recommended_restock = max(0, needed_quantity - current_quantity)  # Only restock what's needed
-            
+    
+            recommended_restock = round(recommended_restock) 
             
             recommendations.append({
                 'item_id': row['id'],
-                'item_name': row['name'],
                 'current_quantity': current_quantity,
                 'predicted_monthly_usage': int(predicted_monthly_usage),
                 'recommended_restock': recommended_restock
