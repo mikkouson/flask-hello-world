@@ -119,12 +119,30 @@ def prepare_data():
         inventory_data = supabase.table("inventory").select("*").execute()
         inventory_df = pd.DataFrame(inventory_data.data)
 
+        # Fetch inventory logs to get last restock dates
+        inventory_logs = supabase.table("inventory_logs").select("*").execute()
+        logs_df = pd.DataFrame(inventory_logs.data)
+        
+        # Get the latest restock date for each item
+        latest_restock_dates = logs_df.sort_values('created_at').groupby('item_id')['created_at'].last()
+
         # Fetch usage data
         usage_data = supabase.table("items_used").select("*").execute()
         usage_df = pd.DataFrame(usage_data.data)
 
-        # Group usage data by item_id and date
-        usage_pivot = usage_df.pivot_table(
+        # Filter usage data based on restock dates
+        filtered_usage = []
+        for item_id in usage_df['item_id'].unique():
+            item_usage = usage_df[usage_df['item_id'] == item_id].copy()
+            if item_id in latest_restock_dates.index:
+                last_restock = pd.to_datetime(latest_restock_dates[item_id])
+                item_usage = item_usage[pd.to_datetime(item_usage['created_at']) > last_restock]
+            filtered_usage.append(item_usage)
+        
+        filtered_usage_df = pd.concat(filtered_usage, ignore_index=True)
+
+        # Create pivot table with filtered data
+        usage_pivot = filtered_usage_df.pivot_table(
             index='item_id', 
             columns='created_at', 
             values='quantity', 
@@ -134,7 +152,7 @@ def prepare_data():
         # Fill missing dates with 0
         usage_pivot = usage_pivot.fillna(0)
 
-        # Merge inventory with usage data
+        # Merge inventory with filtered usage data
         merged_df = pd.merge(
             inventory_df, 
             usage_pivot, 
