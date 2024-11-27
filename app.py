@@ -173,53 +173,60 @@ def train_predict_model(merged_df):
         # Prepare features and target
         date_columns = [col for col in merged_df.columns if isinstance(col, str) and col.startswith('20')]
         
-        # Create features matrix
-        X = merged_df[date_columns]
-        y = X.sum(axis=1)  # Total usage as target
-
+        # Filter out items with insufficient data
+        valid_items_mask = (merged_df[date_columns] > 0).sum(axis=1) >= 3
+        filtered_df = merged_df[valid_items_mask].copy()
+        
+        # Prepare features matrix for valid items
+        X = filtered_df[date_columns]
+        
+        # Prepare Random Forest model
+        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        
+        # Total usage as target
+        y = X.sum(axis=1)
+        
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-        # Train Random Forest model
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        
+        # Train model
         model.fit(X_train, y_train)
-
-        # Predict and evaluate
-        y_pred = model.predict(X_test)
         
-        metrics = {
-            'MAE': mean_absolute_error(y_test, y_pred),
-        }
-
-        
-        # Predict next month's usage
+        # Predict next month's usage for valid items
         predicted_usage = model.predict(X)
         
         # Generate recommendations
         recommendations = []
-        for idx, row in merged_df.iterrows():
-            predicted_monthly_usage = predicted_usage[idx]
+        for idx, row in filtered_df.iterrows():
             current_quantity = row['quantity']
+            predicted_monthly_usage = int(predicted_usage[filtered_df.index.get_loc(idx)])
             
             # Recommend restock with 20% safety buffer
             needed_quantity = predicted_monthly_usage * 1.2  # Total needed with safety buffer
-            recommended_restock = max(0, needed_quantity - current_quantity)  # Only restock what's needed
-    
-            recommended_restock = round(recommended_restock) 
+            recommended_restock = max(0, round(needed_quantity - current_quantity))  # Only restock what's needed
             
             recommendations.append({
                 'item_id': row['id'],
                 'current_quantity': current_quantity,
-                'predicted_monthly_usage': int(predicted_monthly_usage),
+                'predicted_monthly_usage': predicted_monthly_usage,
                 'recommended_restock': recommended_restock
             })
 
-        return recommendations, metrics
+        # Add items with insufficient data to recommendations with zero predictions
+        for idx, row in merged_df[~valid_items_mask].iterrows():
+            recommendations.append({
+                'item_id': row['id'],
+                'current_quantity': row['quantity'],
+                'predicted_monthly_usage': 0,
+                'recommended_restock': 0
+            })
+
+        return recommendations, {}
 
     except Exception as e:
         print(f"Error in model training: {e}")
         raise
-
+        
 @app.route('/api/predictions', methods=['GET'])
 def get_predictions():
     try:
